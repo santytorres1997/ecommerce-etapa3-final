@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contacto</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<header>
+    <div class="logo">
+        <img src="img/logo.png" alt="Logo">
+        <h1>Mi Tienda</h1>
+    </div>
+    <nav>
+        <a href="index.html">Inicio</a>
+        <a href="alta.html">Alta</a>
+        <a href="contacto.html">Contacto</a>
+        <a href="nosotros.html">Nosotros</a>
+    </nav>
+</header>
+
+<main>
+    <h2>Formulario de contacto</h2>
+    <form>
+        <label>Nombre: <input type="text" required></label>
+        <label>Email: <input type="email" required></label>
+        <label>Comentarios: <textarea required></textarea></label>
+        <button type="submit">Enviar</button>
+    </form>
+</main>
+
+<footer>
+    <p>© 2025 Mi Tienda - Todos los derechos reservados</p>
+</footer>
+
+</body>
+</html>
+

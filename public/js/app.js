@@ -1,0 +1,691 @@
+
+if (typeof CONFIG === 'undefined') {
+  var CONFIG = {
+    MOCKAPI_BASE: "",
+    ENDPOINTS: { productos: "api/productos", carrito: "api/carrito" }
+  };
+  window.CONFIG = CONFIG;
+}
+
+
+
+
+
+
+
+// ===== Helpers =====
+const qs = (sel, ctx=document) => ctx.querySelector(sel);
+const qsa = (sel, ctx=document) => [...ctx.querySelectorAll(sel)];
+
+const formatMoney = (n) => (Number(n||0)).toFixed(2);
+
+const toast = (msg) => {
+  let t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => t.remove(), 300);
+  }, 1600);
+};
+
+// ===== Cliente API sencillo (fetch + async/await) =====
+async function apiGet(path) {
+  const url = `${CONFIG.MOCKAPI_BASE}/${path}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
+  return await res.json();
+}
+
+async function apiPost(path, data) {
+  const url = `${CONFIG.MOCKAPI_BASE}/${path}`;
+  const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
+  if (!res.ok) throw new Error(`POST ${url} -> ${res.status}`);
+  return await res.json();
+}
+
+async function apiDelete(path) {
+  const url = `${CONFIG.MOCKAPI_BASE}/${path}`;
+  const res = await fetch(url, { method:'DELETE' });
+  if (!res.ok) throw new Error(`DELETE ${url} -> ${res.status}`);
+  return await res.json();
+}
+
+
+async function seedProductosIfNeeded() {
+  try {
+    const list = await apiGet(CONFIG.ENDPOINTS.productos);
+    if (Array.isArray(list) && list.length >= 3) return;
+    const seeds = [
+      { nombre: "Auricular", precio: 1200, stock: 10, marca: "Genérica", categoria: "Audio", descCorta: "Auricular clásico", descLarga: "Auricular de buena calidad.", envio: true, edadDesde: 0, edadHasta: 99, foto: "img/Producto1.jpg" },
+      { nombre: "Sillon", precio: 2500, stock: 5, marca: "Hogar", categoria: "Muebles", descCorta: "Sillón cómodo", descLarga: "Sillón tapizado para living.", envio: false, edadDesde: 0, edadHasta: 99, foto: "img/Producto2.jpg" },
+      { nombre: "Mueble", precio: 3800, stock: 3, marca: "Hogar", categoria: "Muebles", descCorta: "Mueble multiuso", descLarga: "Mueble de madera para varios usos.", envio: false, edadDesde: 0, edadHasta: 99, foto: "img/Producto3.jpg" }
+    ];
+    for (const p of seeds) {
+      await apiPost(CONFIG.ENDPOINTS.productos, p);
+    }
+    console.log("Seeds creados en MockAPI productos");
+  } catch (e) {
+    console.warn("No se pudieron crear seeds (verificar permisos/endpoint).", e);
+  }
+}
+
+// ===== State =====
+const Cart = {
+  items: JSON.parse(localStorage.getItem("cart_items") || "[]"),
+
+  save() { localStorage.setItem("cart_items", JSON.stringify(this.items)); updateCartCount(); },
+
+  empty() { this.items = []; this.save(); },
+
+  add(product) {
+    const i = this.items.findIndex(p => p.id == product.id);
+    if (i >= 0) this.items[i].qty += 1;
+    else this.items.push({ id: product.id, nombre: product.nombre, precio: Number(product.precio), foto: product.foto || product.imagen || product.image || "", qty: 1 });
+    this.save();
+  },
+
+  setQty(id, qty) {
+    const i = this.items.findIndex(p => p.id == id);
+    if (i >= 0) {
+      this.items[i].qty = Math.max(1, Number(qty||1));
+      this.save();
+    }
+  },
+
+  inc(id) {
+    const i = this.items.findIndex(p => p.id == id);
+    if (i >= 0) { this.items[i].qty += 1; this.save(); }
+  },
+
+  dec(id) {
+    const i = this.items.findIndex(p => p.id == id);
+    if (i >= 0) { this.items[i].qty = Math.max(1, this.items[i].qty - 1); this.save(); }
+  },
+
+  remove(id) {
+    this.items = this.items.filter(p => p.id != id);
+    this.save();
+  },
+
+  total() {
+    return this.items.reduce((acc, it) => acc + (Number(it.precio) * Number(it.qty)), 0);
+  }
+};
+
+function updateCartCount() {
+  const el = qs('#cartCount'); if (el) el.textContent = Cart.items.reduce((a,b)=>a+b.qty,0);
+}
+
+// ===== Modal Carrito =====
+const CartModal = (() => {
+  const modal = () => qs('#cartModal');
+  const itemsEl = () => qs('#cartItems');
+  const totalEl = () => qs('#cartTotal');
+  const emptyEl = () => qs('#cartEmpty');
+
+  function render() {
+    const items = Cart.items;
+    itemsEl().innerHTML = items.map(it => `
+      <div class="cart-item" data-id="${it.id}">
+        <img src="${it.foto || 'img/Producto1.jpg'}" alt="${it.nombre}">
+        <div class="ci-data">
+          <div class="ci-name">${it.nombre}</div>
+          <div class="ci-price">$${formatMoney(it.precio)}</div>
+        </div>
+        <div class="ci-qty">
+          <button class="qty -dec" data-act="dec">−</button>
+          <input type="number" min="1" value="${it.qty}" class="qty-input">
+          <button class="qty -inc" data-act="inc">+</button>
+        </div>
+        <div class="ci-sub">$${formatMoney(it.precio * it.qty)}</div>
+        <button class="ci-del" title="Eliminar" data-act="del">🗑</button>
+      </div>
+    `).join('');
+
+    totalEl().textContent = formatMoney(Cart.total());
+    emptyEl().style.display = items.length ? 'none' : 'block';
+  }
+
+  function open() {
+    render();
+    const m = modal();
+    m.classList.remove('hidden');
+    m.setAttribute('aria-hidden','false');
+    document.body.style.overflow='hidden';
+  }
+
+  function close() {
+    const m = modal();
+    m.classList.add('hidden');
+    m.setAttribute('aria-hidden','true');
+    document.body.style.overflow='';
+  }
+
+  function toggle() { modal().classList.contains('hidden') ? open() : close(); }
+
+  function bind() {
+    document.addEventListener('click', (e) => {
+      // controles de apertura/cierre
+      if (e.target.matches('#btnCart')) { toggle(); }
+      if (e.target.matches('.modal-close,[data-close],.modal-backdrop')) { close(); }
+      // overlay
+      if (e.target.dataset.close === 'overlay') { close(); }
+
+      // acciones del carrito
+      if (e.target.closest('#cartItems')) {
+        const row = e.target.closest('.cart-item');
+        if (!row) return;
+        const id = row.dataset.id;
+        if (e.target.dataset.act === 'inc') { Cart.inc(id); render(); }
+        if (e.target.dataset.act === 'dec') { Cart.dec(id); render(); }
+        if (e.target.dataset.act === 'del') { Cart.remove(id); render(); }
+        if (e.target.matches('.qty-input')) return;
+      }
+    });
+
+    document.addEventListener('input', (e) => {
+      if (e.target.matches('.qty-input')) {
+        const row = e.target.closest('.cart-item'); if (!row) return;
+        Cart.setQty(row.dataset.id, e.target.value);
+        render();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close();
+    });
+
+    // buttons
+    qs('#btnEmptyCart')?.addEventListener('click', () => { Cart.empty(); render(); });
+    qs('#btnSendOrder')?.addEventListener('click', async () => {
+      try {
+        if (!Cart.items.length) { toast('No hay items.'); return; }
+        const payload = {
+          fecha: new Date().toISOString(),
+          items: Cart.items,
+          total: Cart.total()
+        };
+        await apiPost(`${CONFIG.ENDPOINTS.carrito}`, payload);
+        toast('Pedido enviado ✔');
+        Cart.empty();
+        render();
+      } catch (err) {
+        console.error(err);
+        alert('No se pudo enviar el pedido. Verifique MOCKAPI_BASE en localStorage.');
+      }
+    });
+  }
+
+  return { bind, open, close, render };
+})();
+
+// ===== Router =====
+const Router = (() => {
+  const routes = {
+    home: renderHome,
+    alta: renderAlta,
+    contacto: renderContacto,
+    nosotros: renderNosotros,
+  };
+
+  function pathToRoute(pathname) {
+    if (pathname === '/' || pathname === '/index.html') return 'home';
+    const m = pathname.replace(/^\//,'').split('/')[0];
+    return routes[m] ? m : 'home';
+  }
+
+  function navigate(route) {
+    history.pushState({ route }, '', route === 'home' ? '/' : `/${route}`);
+    render(route);
+  }
+
+  function render(route) {
+    const view = routes[route] || routes.home;
+    view();
+  }
+
+  function bind() {
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest('a[data-route]');
+      if (a) {
+        e.preventDefault();
+        const route = a.dataset.route;
+        navigate(route);
+      }
+    });
+
+    window.addEventListener('popstate', (e) => {
+      const route = pathToRoute(location.pathname);
+      render(route);
+    });
+  }
+
+  return { bind, navigate, render, pathToRoute };
+})();
+
+// ===== Vistas =====
+async function renderHome() {
+  const app = qs('#app');
+  app.innerHTML = `<h2>Productos</h2><div class="cards" id="cards"></div>`;
+  try {
+    const productos = await apiGet(CONFIG.ENDPOINTS.productos);
+    const cards = productos.map(p => cardHTML(p)).join('');
+    qs('#cards').innerHTML = cards;
+  } catch (err) {
+    console.error(err);
+    qs('#cards').innerHTML = `<p class="error">No se pudieron obtener productos. Configure MOCKAPI_BASE en localStorage.</p>`;
+  }
+  // Añadir al carrito
+  app.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-add]');
+    if (!btn) return;
+    const data = JSON.parse(btn.dataset.add);
+    Cart.add(data);
+    toast('Producto agregado al carrito');
+    updateCartCount();
+  }, {});
+}
+
+function cardHTML(p) {
+  const foto = p.foto || p.imagen || p.image || 'img/Producto1.jpg';
+  const precio = p.precio ?? p.price ?? 0;
+  const addData = JSON.stringify({ id:p.id, nombre:p.nombre||p.title||"Producto", precio, foto });
+  return `
+    <div class="card">
+      <img src="${foto}" alt="${p.nombre||'Producto'}">
+      <div class="card-body">
+        <h3>${p.nombre || p.title || 'Producto'}</h3>
+        <p class="price">$${formatMoney(precio)}</p>
+        <button class="btn-primary" data-add='${addData}'>Agregar al carrito</button>
+      </div>
+    </div>
+  `;
+}
+
+// --- Validaciones comunes ---
+const Validators = {
+  required: (v) => v != null && String(v).trim() !== '',
+  number: (v) => !isNaN(parseFloat(v)) && isFinite(v),
+  email: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim()),
+  minLen: (n) => (v) => String(v||'').trim().length >= n,
+  maxLen: (n) => (v) => String(v||'').trim().length <= n,
+  range: (min, max) => (v) => {
+    const n = Number(v); return !isNaN(n) && n >= min && n <= max;
+  }
+};
+
+function showFieldError(input, msg) {
+  let help = input.parentElement.querySelector('.field-error');
+  if (!help) {
+    help = document.createElement('div');
+    help.className = 'field-error';
+    input.parentElement.appendChild(help);
+  }
+  help.textContent = msg;
+  input.classList.add('invalid');
+}
+
+function clearFieldError(input) {
+  const help = input.parentElement.querySelector('.field-error');
+  if (help) help.textContent = '';
+  input.classList.remove('invalid');
+}
+
+// --- Alta ---
+function altaTemplate() {
+  return `
+    <h2>Alta de productos</h2>
+    <form id="formAlta" novalidate>
+      <div class="grid">
+        <label>Nombre
+          <input name="nombre" required placeholder="Ej: Auricular">
+        </label>
+        <label>Precio
+          <input name="precio" required type="number" min="0" step="0.01" placeholder="Ej: 1200">
+        </label>
+        <label>Stock
+          <input name="stock" required type="number" min="0" step="1" placeholder="Ej: 10">
+        </label>
+        <label>Marca
+          <input name="marca" required placeholder="Ej: Genérica">
+        </label>
+        <label>Categoría
+          <input name="categoria" required placeholder="Ej: Audio">
+        </label>
+        <label>Descripción corta
+          <input name="descCorta" required placeholder="Resumen">
+        </label>
+        <label>Descripción larga
+          <textarea name="descLarga" required rows="3" placeholder="Detalles del producto"></textarea>
+        </label>
+        <label>Envío sin cargo
+          <input name="envio" type="checkbox">
+        </label>
+        <label>Edad desde
+          <input name="edadDesde" type="number" min="0" max="120" value="0">
+        </label>
+        <label>Edad hasta
+          <input name="edadHasta" type="number" min="0" max="120" value="99">
+        </label>
+        <label>Foto (URL)
+          <input name="foto" placeholder="img/Producto1.jpg">
+        </label>
+      </div>
+      <div class="form-actions">
+        <button class="btn-primary" type="submit">Guardar</button>
+        <button class="btn-outline" type="reset">Limpiar</button>
+      </div>
+    </form>
+    <div id="tablaAlta"></div>
+  `;
+}
+
+function renderAlta() {
+  const app = qs('#app');
+  app.innerHTML = altaTemplate();
+
+  const form = qs('#formAlta');
+
+  // validaciones de desenfoque
+  form.addEventListener('blur', (e) => {
+    if (!e.target.name) return;
+    validateAltaField(e.target);
+  }, true);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const data = Object.fromEntries(fd.entries());
+    data.envio = fd.get('envio') === 'on';
+
+    // validación entre campos
+    let ok = true;
+    qsa('[name]', form).forEach((inp) => {
+      if (!validateAltaField(inp)) ok = false;
+    });
+    const d = Number(data.edadDesde||0), h = Number(data.edadHasta||0);
+    if (d > h) { ok = false; showFieldError(qs('[name="edadHasta"]', form), 'Debe ser mayor o igual a Edad desde'); }
+
+    if (!ok) {
+      toast('Hay errores de validación');
+      return;
+    }
+
+    try {
+      const payload = {
+        nombre: data.nombre.trim(),
+        precio: Number(data.precio),
+        stock: Number(data.stock),
+        marca: data.marca.trim(),
+        categoria: data.categoria.trim(),
+        descCorta: data.descCorta.trim(),
+        descLarga: data.descLarga.trim(),
+        envio: !!data.envio,
+        edadDesde: Number(data.edadDesde||0),
+        edadHasta: Number(data.edadHasta||0),
+        foto: data.foto?.trim() || 'img/Producto1.jpg'
+      };
+      const saved = await apiPost(CONFIG.ENDPOINTS.productos, payload);
+      toast('Producto guardado ✔');
+      form.reset();
+      // Opcionalmente, actualice la tabla a continuación (lista simple).
+      await renderTablaAlta();
+    } catch (err) {
+      console.error(err);
+      alert('No se pudo guardar. Verifique MOCKAPI_BASE.');
+    }
+  });
+
+  renderTablaAlta();
+}
+
+function validateAltaField(input) {
+  const name = input.name;
+  const val = input.value;
+
+  // Reglas básicas por campo
+  const rules = {
+    nombre: [ ['required','Campo requerido'], ['minLen:3','Mínimo 3 caracteres'], ['maxLen:50','Máximo 50 caracteres'] ],
+    precio: [ ['required','Campo requerido'], ['number','Debe ser numérico'] ],
+    stock:  [ ['required','Campo requerido'], ['number','Debe ser numérico'] ],
+    marca:  [ ['required','Campo requerido'] ],
+    categoria: [ ['required','Campo requerido'] ],
+    descCorta: [ ['required','Campo requerido'], ['maxLen:120','Máximo 120 caracteres'] ],
+    descLarga: [ ['required','Campo requerido'] ],
+    edadDesde: [ ['number','Debe ser numérico'], ['range:0:120','0 a 120'] ],
+    edadHasta: [ ['number','Debe ser numérico'], ['range:0:120','0 a 120'] ],
+    foto: []
+  };
+
+  const validators = {
+    required: (v)=>Validators.required(v),
+    number: (v)=>Validators.number(v),
+    'minLen:3': (v)=>Validators.minLen(3)(v),
+    'maxLen:50': (v)=>Validators.maxLen(50)(v),
+    'maxLen:120': (v)=>Validators.maxLen(120)(v),
+    'range:0:120': (v)=>Validators.range(0,120)(v),
+  };
+
+  const fieldRules = rules[name];
+  if (!fieldRules) return true;
+
+  for (const [rule, msg] of fieldRules) {
+    if (!validators[rule](val)) { showFieldError(input, msg); return false; }
+  }
+  clearFieldError(input);
+  return true;
+}
+
+async function renderTablaAlta() {
+  const cont = qs('#tablaAlta');
+  try {
+    const productos = await apiGet(CONFIG.ENDPOINTS.productos);
+    if (!productos.length) { cont.innerHTML = ''; return; }
+    cont.innerHTML = `
+      <h3>Productos cargados</h3>
+      <table class="tbl">
+        <thead><tr><th>Foto</th><th>Nombre</th><th>Precio</th><th>Stock</th><th></th></tr></thead>
+        <tbody>
+          ${productos.map(p => `
+            <tr data-id="${p.id}">
+              <td><img src="${p.foto||'img/Producto1.jpg'}" class="tbl-img"></td>
+              <td>${p.nombre}</td>
+              <td>$${formatMoney(p.precio||0)}</td>
+              <td>${p.stock||0}</td>
+              <td><button class="btn-outline" data-del="${p.id}">Eliminar</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    cont.addEventListener('click', async (e) => {
+      const id = e.target.getAttribute('data-del');
+      if (!id) return;
+      if (!confirm('¿Eliminar producto?')) return;
+      try {
+        await apiDelete(`${CONFIG.ENDPOINTS.productos}/${id}`);
+        toast('Eliminado ✔');
+        renderTablaAlta();
+      } catch(err) {
+        console.error(err);
+        alert('No se pudo eliminar. Verifique MOCKAPI_BASE.');
+      }
+    }, {});
+  } catch(err) {
+    cont.innerHTML = '';
+  }
+}
+
+// --- Contacto ---
+function contactoTemplate() {
+  return `
+    <h2>Formulario de contacto</h2>
+    <form id="formContacto" novalidate>
+      <label>Nombre
+        <input name="nombre" required placeholder="Tu nombre">
+      </label>
+      <label>Email
+        <input name="email" required type="email" placeholder="tucorreo@dominio.com">
+      </label>
+      <label>Comentarios
+        <textarea name="comentarios" required rows="4" placeholder="Escribe tu mensaje"></textarea>
+      </label>
+      <div class="form-actions">
+        <button class="btn-primary" type="submit">Enviar</button>
+        <button class="btn-outline" type="reset">Limpiar</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderContacto() {
+  const app = qs('#app');
+  app.innerHTML = contactoTemplate();
+  const form = qs('#formContacto');
+
+  form.addEventListener('blur', (e) => {
+    if (!e.target.name) return;
+    validateContactoField(e.target);
+  }, true);
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    let ok = true;
+    qsa('[name]', form).forEach(inp => { if (!validateContactoField(inp)) ok = false; });
+    if (!ok) { toast('Hay errores de validación'); return; }
+    toast('Mensaje enviado ✔');
+    form.reset();
+  });
+}
+
+function validateContactoField(input) {
+  const name = input.name;
+  const val = input.value;
+  if (name === 'nombre') {
+    if (!Validators.required(val) || !Validators.minLen(3)(val)) { showFieldError(input, 'Mínimo 3 caracteres'); return false; }
+  }
+  if (name === 'email') {
+    if (!Validators.email(val)) { showFieldError(input, 'Email inválido'); return false; }
+  }
+  if (name === 'comentarios') {
+    if (!Validators.required(val) || !Validators.minLen(5)(val)) { showFieldError(input, 'Mínimo 5 caracteres'); return false; }
+  }
+  clearFieldError(input); return true;
+}
+
+// ===== Init =====
+function boot() {
+  // SPA
+  Router.bind();
+  const initial = Router.pathToRoute(location.pathname);
+  seedProductosIfNeeded().finally(() => Router.render(initial));
+
+  // Cart modal
+  CartModal.bind();
+  updateCartCount();
+
+  
+}
+
+document.addEventListener('DOMContentLoaded', boot);
+
+
+// Pub/Sub para carrito (inyectado)
+const __cartListeners = new Set();
+const onCartChange = (fn) => (__cartListeners.add(fn), () => __cartListeners.delete(fn));
+function __emitCart(items){ __cartListeners.forEach(f=>{ try{f(items);}catch(_){}}); }
+if (typeof Cart === 'object') {
+  const _save = Cart.save;
+  Cart.save = function() {
+    try { _save && _save.apply(Cart, arguments); } catch(_){}
+    try { __emitCart(Cart.items || []); } catch(_){}
+  };
+}
+
+
+seedProductosIfNeeded();
+
+
+// === AUTO-DETECTOR MOCKAPI (inyectado) ===
+function __qsParam(name){
+  const m = location.search.match(new RegExp('[?&]'+name+'=([^&]+)'));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+async function __probeBase(base){
+  try{
+    const res = await fetch(`${base.replace(/\/$/,'')}/${CONFIG.ENDPOINTS.productos}`, {cache:'no-store'});
+    if(!res.ok) return { ok:false, status:res.status };
+    const data = await res.json().catch(()=>null);
+    const isArray = Array.isArray(data);
+    return { ok: true, status:res.status, isArray };
+  }catch(e){ return { ok:false, err:String(e) };}
+}
+async function detectMockApiBase(){
+  const urlOverride = __qsParam('api');
+  const stored = (function(){ try { return localStorage.MOCKAPI_BASE || '' } catch(_) { return '' } })();
+  const defaults = [
+    stored,
+    urlOverride,
+    "https://68e9132df2707e6128cd7502.mockapi.io",
+    "https://68e58eaa21dd31f22cc21ffa.mockapi.io"
+  ].filter(Boolean);
+  const seen = new Set();
+  for (const base of defaults){
+    if (seen.has(base)) continue;
+    seen.add(base);
+    const r = await __probeBase(base);
+    const bannerBase = document.getElementById('apiBaseTxt');
+    const bannerHealth = document.getElementById('apiHealthTxt');
+    if (bannerBase) bannerBase.textContent = base;
+    if (r.ok){
+      if (bannerHealth) bannerHealth.textContent = `OK (${r.status})`;
+      try { localStorage.MOCKAPI_BASE = base; } catch(_){}
+      return base;
+    } else {
+      if (bannerHealth) bannerHealth.textContent = `Fallo`;
+    }
+  }
+  const bannerBase = document.getElementById('apiBaseTxt');
+  const bannerHealth = document.getElementById('apiHealthTxt');
+  if (bannerBase) bannerBase.textContent = "(sin conexión)";
+  if (bannerHealth) bannerHealth.textContent = `Error`;
+  throw new Error("No se pudo detectar una base MockAPI operativa.");
+}
+
+async function bootAppWithDetection(){
+  try{
+    const base = await detectMockApiBase();
+    // Forzar a que CONFIG get MOCKAPI_BASE lea el stored actualizado
+    console.log("Usando MockAPI:", base);
+    // Seeds y primer render
+    if (typeof seedProductosIfNeeded === 'function') {
+      await seedProductosIfNeeded();
+    }
+    if (typeof navigate === 'function') {
+      navigate('home');
+    } else if (typeof render === 'function') {
+      render('home');
+    }
+  }catch(e){
+    console.error(e);
+    if (typeof toast === 'function') toast('No se pudo conectar con MockAPI');
+  }
+}
+
+// Arranque automático tras load si no se llamó aún
+if (!window.__bootAppScheduled) {
+  window.__bootAppScheduled = true;
+  window.addEventListener('load', () => bootAppWithDetection());
+}
+
+
+function renderNosotros() {
+  const app = qs('#app');
+  app.innerHTML = `
+    <h2>Sobre nosotros</h2>
+    <p>Somos una tienda ficticia creada para un trabajo final. Vendemos productos de calidad a precios competitivos, con envíos a todo el país.</p>
+  `;
+}

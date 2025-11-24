@@ -1,0 +1,6 @@
+// Ejemplo simple para manejar búsqueda (puede ampliarse)
+document.querySelector('.search-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    alert('Función de búsqueda no implementada todavía.');
+});
+
